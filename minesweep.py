@@ -40,7 +40,7 @@ w, h, mines = [
 has_mine = gen_map(w, h, mines)
 numbers = np.vectorize(sum)(collect_adj(has_mine))
 
-fig = figure(plot_width=400, plot_height=400, tools="tap,pan,wheel_zoom,box_zoom,reset")
+fig = figure(plot_width=200, plot_height=200, tools="tap,pan,wheel_zoom,box_zoom,reset")
 
 
 def render_text(is_mine, number, opening):
@@ -114,8 +114,14 @@ L = entropy_energy + sum(lambdas * eqs)
 variables = np.concatenate([prob_symbols.flatten(), lambdas])
 gradL = [sp.diff(L, x) for x in variables]
 
-stationary_points = sp.solve(gradL, variables.tolist(), dict=True)
+stationary_points = sp.nsolve(gradL, variables.tolist(), np.ones_like(variables) - 0.5, dict=True, prec=3)
 # np.ones_like(variables) - 0.5,
-max_point = max((p for p in stationary_points), key=lambda p: L.subs(p))
+max_point = max((p for p in stationary_points), key=lambda p: entropy_energy.subs(p))
 
-st.write(max_point)
+# st.write(max_point)
+
+@np.vectorize
+def get_solved(x):
+    return float(max_point[x])
+
+st.write(get_solved(prob_symbols))

@@ -1,3 +1,6 @@
+from itertools import chain
+
+import torch
 from bokeh.models import CustomJS
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource
@@ -5,7 +8,12 @@ from bokeh.models import ColumnDataSource
 import streamlit as st
 import numpy as np
 from streamlit_bokeh_events import streamlit_bokeh_events
-import sympy as sp
+from torch.distributions import Categorical
+from torch.nn import Sigmoid
+from lagrange_constrain import LagrangeConstrainedLoss
+
+
+# from models import collect_tensor_adj_sum, MineModel
 
 
 @st.cache
@@ -28,7 +36,8 @@ def collect_adj(array: np.ndarray):
         sliced = padding_array[pi - 1:pi + 2, pj - 1:pj + 2]
         mi, mj = sliced.shape
         si, sj = 1, 1
-        collected[i, j] = list(sliced[i, j] for i in range(mi) for j in range(mj) if not (i == si and j == sj) and sliced[i, j] is not None)
+        collected[i, j] = list(sliced[i, j] for i in range(mi) for j in range(mj) if
+                               not (i == si and j == sj) and sliced[i, j] is not None)
     return collected
 
 
@@ -66,9 +75,9 @@ rect_sources = ColumnDataSource(data={
     "y": i_s_y,
 })
 
-st.write(now)
 st.write(has_mine)
-st.write(numbers)
+
+probs = st.empty()
 
 fig.rect(x="x", y="y", width=0.8, height=0.8, fill_alpha="now_alpha", source=rect_sources)
 fig.text(x=j_s.flatten(), y=i_s_y - 0.25, text=texts.flatten(), align="center")
@@ -92,6 +101,65 @@ if toggling_index is not None:
     # st.write(flat_now)
     now[:] = flat_now.reshape(now.shape)
     # st.write(now)
+
+
+def collect_tensor_adj_sum(tensor: torch.Tensor):
+    kernel = torch.ones(3, 3)
+    kernel[1, 1] = 0
+    conv_adj = torch.nn.functional.conv2d(
+        tensor.unsqueeze(0).unsqueeze(0),
+        kernel.unsqueeze(0).unsqueeze(0),
+        stride=1, padding=1
+    )
+    return conv_adj.squeeze().squeeze()
+
+
+class MineModel(torch.nn.Module):
+    def __init__(self, h, w, now_tensor: torch.Tensor):
+        super().__init__()
+        self.now_tensor = now_tensor
+        self.prob_vars_param = torch.nn.Parameter(torch.Tensor(size=(h, w)))
+        self.constrain = LagrangeConstrainedLoss(
+            eqs_zero_len=int(now_tensor.sum()) * 2 + 1,
+        )
+
+    @property
+    def probs(self):
+        return Sigmoid()(self.prob_vars_param)
+
+    def forward(self, has_mine_tensor, numbers_tensor, mines):
+        prob_vars = Sigmoid()(self.prob_vars_param)
+        opened_is_known = prob_vars - has_mine_tensor.type_as(prob_vars)
+        opened_is_known = opened_is_known[self.now_tensor]
+        around_numbers = collect_tensor_adj_sum(prob_vars) - numbers_tensor
+        around_numbers = around_numbers[self.now_tensor]
+        all_mines_count = torch.sum(prob_vars) - mines
+        all_eqs = torch.cat([opened_is_known, around_numbers, all_mines_count.unsqueeze(0)])
+        entropy_energy = Categorical(probs=prob_vars.flatten()).entropy()
+        loss = self.constrain(-entropy_energy, all_eqs)
+        return loss
+
+
+has_mine_tensor = torch.from_numpy(has_mine)
+now_tensor = torch.from_numpy(now)
+numbers_tensor = torch.from_numpy(numbers)
+
+mine_model = MineModel(h, w, now_tensor)
+optim = torch.optim.SGD(mine_model.parameters(), lr=0.01)
+max_epoch = 600
+prog = st.sidebar.progress(0)
+training = st.sidebar.empty()
+for epoch in range(max_epoch):
+    optim.zero_grad()
+    loss = mine_model(has_mine_tensor, numbers_tensor, mines)
+    loss.backward()
+    training.text(f"constrained entropy: {loss}")
+    prog.progress(epoch / max_epoch)
+    optim.step()
+
+probs.table(mine_model.probs.detach().numpy())
+
+r = """
 
 prob_symbols = np.array([[sp.Symbol(f"P_{{{i},{j}}}", real=True) for j in range(w)] for i in range(h)])
 
@@ -122,10 +190,10 @@ slacken_less_than_1_vars = np.array([[sp.Symbol(f"z_{{{i},{j}}}", real=True) for
 less_than_1 = 1 - prob_symbols - slacken_less_than_1_vars
 
 # initial_solve = sp.solve(eqs.tolist() + less_than_1.flatten().tolist(), tuple(np.concatenate([prob_symbols.flatten(), slacken_less_than_1_vars.flatten()])), positive=True, dict=True)
-initial_solve = sp.solveset(eqs.tolist(), prob_symbols.flatten().tolist(), domain=sp.Interval(0,1))
+initial_solve = sp.solveset(eqs.tolist(), prob_symbols.flatten().tolist(), domain=sp.Interval(0, 1))
 initial_solved_dict = {}
 for solve_set in initial_solve:
-    for sym, value in zip(prob_symbols.flatten(), solve_set):#solve_set.items():
+    for sym, value in zip(prob_symbols.flatten(), solve_set):  # solve_set.items():
         st.latex(sp.latex(sp.Eq(sym, value, evaluate=False)))
         initial_solved_dict[sym] = value
 
@@ -154,3 +222,4 @@ def get_solved(x):
     return float(max_point[x])
 
 # st.write(get_solved(prob_symbols))
+"""

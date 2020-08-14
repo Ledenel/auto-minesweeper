@@ -128,7 +128,7 @@ class MineModel(torch.nn.Module):
         return Sigmoid()(self.prob_vars_param)
 
     def forward(self, has_mine_tensor, numbers_tensor, mines):
-        prob_vars = Sigmoid()(self.prob_vars_param)
+        prob_vars = self.probs
         opened_is_known = prob_vars - has_mine_tensor.type_as(prob_vars)
         opened_is_known = opened_is_known[self.now_tensor]
         around_numbers = collect_tensor_adj_sum(prob_vars) - numbers_tensor
@@ -145,8 +145,8 @@ now_tensor = torch.from_numpy(now)
 numbers_tensor = torch.from_numpy(numbers)
 
 mine_model = MineModel(h, w, now_tensor)
-optim = torch.optim.SGD(mine_model.parameters(), lr=0.01)
-max_epoch = 600
+optim = torch.optim.SGD(mine_model.parameters(), lr=0.05, momentum=0.01)
+max_epoch = 3000
 prog = st.sidebar.progress(0)
 training = st.sidebar.empty()
 for epoch in range(max_epoch):
@@ -155,6 +155,7 @@ for epoch in range(max_epoch):
     loss.backward()
     training.text(f"constrained entropy: {loss}")
     prog.progress(epoch / max_epoch)
+    probs.table(mine_model.probs.detach().numpy())
     optim.step()
 
 probs.table(mine_model.probs.detach().numpy())

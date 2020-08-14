@@ -132,7 +132,7 @@ class MineModel(torch.nn.Module):
         opened_is_known = prob_vars - has_mine_tensor.type_as(prob_vars)
         opened_is_known = opened_is_known[self.now_tensor]
         around_numbers = collect_tensor_adj_sum(prob_vars) - numbers_tensor
-        around_numbers = around_numbers[self.now_tensor]
+        around_numbers = around_numbers[self.now_tensor & ~has_mine_tensor]
         all_mines_count = torch.sum(prob_vars) - mines
         all_eqs = torch.cat([opened_is_known, around_numbers, all_mines_count.unsqueeze(0)])
         entropy_energy = Categorical(probs=prob_vars.flatten()).entropy()
@@ -146,7 +146,7 @@ numbers_tensor = torch.from_numpy(numbers)
 
 mine_model = MineModel(h, w, now_tensor)
 optim = torch.optim.SGD(mine_model.parameters(), lr=0.05, momentum=0.01)
-max_epoch = 3000
+max_epoch = st.sidebar.number_input("running epoches", value=500)
 prog = st.sidebar.progress(0)
 training = st.sidebar.empty()
 for epoch in range(max_epoch):

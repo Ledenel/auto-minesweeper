@@ -1,4 +1,5 @@
 from itertools import chain
+from typing import Iterable, Sized, Tuple, List
 
 import torch
 from bokeh.models import CustomJS
@@ -114,6 +115,22 @@ def collect_tensor_adj_sum(tensor: torch.Tensor):
     )
     return conv_adj.squeeze().squeeze()
 
+def restrict_vars(vars_source: Iterable[sp.Symbol], min_val=None, max_val=None) -> Tuple[np.ndarray, np.ndarray]:
+    source = np.array(vars_source)
+    eqs = []
+    slack_vars = []
+    if min_val is not None:
+        slack_min = np.array(sp.symbols(f"zmin_:{len(source)}", real=True))
+        slack_vars += slack_min.tolist()
+        slack_min = np.vectorize(sp.Abs)(slack_min)
+        eqs += (source - min_val - slack_min).tolist()
+    if max_val is not None:
+        slack_max = np.array(sp.symbols(f"zmax_:{len(source)}", real=True))
+        slack_vars += slack_max.tolist()
+        slack_max = np.vectorize(sp.Abs)(slack_max)
+        eqs += (max_val - source - slack_max).tolist()
+    return np.array(eqs), np.array(slack_vars)
+
 
 class MineModel(torch.nn.Module):
     def __init__(self, h, w, now_tensor: torch.Tensor):
@@ -168,7 +185,12 @@ def out_syms():
 
     entropy_energy = sum(np.vectorize(entropy)(prob_symbols.flatten()))
 
-    eqs = np.concatenate([opened_is_known, around_numbers, all_bombs])
+
+    r_eqs, slacks = restrict_vars(prob_symbols.flatten(), None, None)
+    st.table(r_eqs)
+    st.table(slacks)
+
+    eqs = np.concatenate([opened_is_known, around_numbers, all_bombs, r_eqs])
 
     lambdas = np.array([sp.Symbol(f"\\lambda_{i}", real=True) for i in range(len(eqs))])
     ln_lambdas = np.array([sp.Symbol(f"r\\lambda_{i}", real=True) for i in range(len(eqs))])
@@ -187,7 +209,7 @@ def out_syms():
         item["equation"] = eq
 
     st.table(gradL)
-    vars_with_lnlambda = np.concatenate([prob_symbols.flatten(), ln_lambdas])
+    vars_with_lnlambda = np.concatenate([prob_symbols.flatten(), ln_lambdas, slacks])
     simplified_eqs = [e["equation"] for e in gradL]
     solved = sp.solve(
         simplified_eqs,
@@ -206,32 +228,33 @@ def out_syms():
 
     # solved = [i for i in solved if is_symbol_all_probs(i, prob_set)]
     # st.write(solved)
-    for solve_dict in solved:
-        st.write(np.vectorize(lambda x: x.subs(solve_dict).evalf(prec))(prob_symbols))
-
-
 
 out_syms()
 
-has_mine_tensor = torch.from_numpy(has_mine)
-now_tensor = torch.from_numpy(now)
-numbers_tensor = torch.from_numpy(numbers)
 
-mine_model = MineModel(h, w, now_tensor)
-optim = torch.optim.SGD(mine_model.parameters(), lr=0.05, momentum=0.01)
-max_epoch = st.sidebar.number_input("running epoches", value=500)
-prog = st.sidebar.progress(0)
-training = st.sidebar.empty()
-for epoch in range(max_epoch):
-    optim.zero_grad()
-    loss = mine_model(has_mine_tensor, numbers_tensor, mines)
-    loss.backward()
-    training.text(f"constrained entropy: {loss}")
-    prog.progress(epoch / max_epoch)
+def torch_optim():
+    global mine_model
+    has_mine_tensor = torch.from_numpy(has_mine)
+    now_tensor = torch.from_numpy(now)
+    numbers_tensor = torch.from_numpy(numbers)
+    mine_model = MineModel(h, w, now_tensor)
+    optim = torch.optim.SGD(mine_model.parameters(), lr=0.05, momentum=0.01)
+    max_epoch = st.sidebar.number_input("running epoches", value=500)
+    prog = st.sidebar.progress(0)
+    training = st.sidebar.empty()
+    for epoch in range(max_epoch):
+        optim.zero_grad()
+        loss = mine_model(has_mine_tensor, numbers_tensor, mines)
+        loss.backward()
+        training.text(f"constrained entropy: {loss}")
+        prog.progress(epoch / max_epoch)
+        probs.table(mine_model.probs.detach().numpy())
+        optim.step()
+
     probs.table(mine_model.probs.detach().numpy())
-    optim.step()
 
-probs.table(mine_model.probs.detach().numpy())
+# torch_optim()
+
 
 r = """
 

@@ -1,5 +1,4 @@
-from itertools import chain
-from typing import Iterable, Sized, Tuple, List
+from typing import Iterable, Tuple
 
 import torch
 from bokeh.models import CustomJS
@@ -8,6 +7,7 @@ from bokeh.models import ColumnDataSource
 
 import streamlit as st
 import numpy as np
+from func_timeout import FunctionTimedOut, func_set_timeout
 from streamlit_bokeh_events import streamlit_bokeh_events
 from torch.distributions import Categorical
 from torch.nn import Sigmoid
@@ -115,17 +115,19 @@ def collect_tensor_adj_sum(tensor: torch.Tensor):
     )
     return conv_adj.squeeze().squeeze()
 
-def restrict_vars(vars_source: Iterable[sp.Symbol], min_val=None, max_val=None, slack_func = lambda x: x*x) -> Tuple[np.ndarray, np.ndarray]:
+
+def restrict_vars(vars_source: Iterable[sp.Symbol], min_val=None, max_val=None, slack_func=lambda x: x * x) -> Tuple[
+    np.ndarray, np.ndarray]:
     source = np.array(vars_source)
     eqs = []
     slack_vars = []
     if min_val is not None:
-        slack_min = np.array(sp.symbols(f"zmin_:{len(source)}", real=True))
+        slack_min = np.array(sp.symbols(f"zmin_{{:{len(source)}}}", real=True))
         slack_vars += slack_min.tolist()
         slack_min = np.vectorize(slack_func)(slack_min)
         eqs += (source - min_val - slack_min).tolist()
     if max_val is not None:
-        slack_max = np.array(sp.symbols(f"zmax_:{len(source)}", real=True))
+        slack_max = np.array(sp.symbols(f"zmax_{{:{len(source)}}}", real=True))
         slack_vars += slack_max.tolist()
         slack_max = np.vectorize(slack_func)(slack_max)
         eqs += (max_val - source - slack_max).tolist()
@@ -165,8 +167,8 @@ def is_symbol_all_probs(solve_dict, sym_set):
                 return False
     return True
 
-
-prec = st.sidebar.number_input("solution precision:", value=3)
+solution_timeout = st.sidebar.number_input("solving timeout(seconds):", value=10)
+solution_precision = st.sidebar.number_input("solution precision:", value=3)
 
 
 def out_syms():
@@ -186,17 +188,25 @@ def out_syms():
 
     entropy_energy = sum(np.vectorize(entropy)(prob_flatten))
 
+    lower, upper = None, None
+    slack = "x^2"
+    if st.sidebar.checkbox("use slacks?"):
+        if st.sidebar.checkbox("lower bound?"):
+            lower = st.sidebar.number_input("lower bound:", value=0)
+        if st.sidebar.checkbox("upper bound?"):
+            upper = st.sidebar.number_input("upper bound:", value=1)
+        slack = st.sidebar.text_input("slack variable form:", value=slack)
+    slack_expr = sp.sympify(slack)
+    r_eqs, slacks = restrict_vars(prob_flatten, lower, upper, sp.lambdify(slack_expr.free_symbols, slack_expr))
 
-    r_eqs, slacks = restrict_vars(prob_flatten, None, None)
-    st.table(r_eqs)
-    st.table(slacks)
+    # st.table(r_eqs)
+    # st.table(slacks)
     prob_flatten = np.concatenate([prob_flatten, slacks])
-
 
     eqs = np.concatenate([opened_is_known, around_numbers, all_bombs, r_eqs])
 
-    lambdas = np.array([sp.Symbol(f"\\lambda_{i}", real=True) for i in range(len(eqs))])
-    ln_lambdas = np.array([sp.Symbol(f"\\mu_{i}", real=True) for i in range(len(eqs))])
+    lambdas = np.array([sp.Symbol(f"\\lambda_{{{i}}}", real=True) for i in range(len(eqs))])
+    ln_lambdas = np.array([sp.Symbol(f"\\mu_{{{i}}}", real=True) for i in range(len(eqs))])
     ln_lambdas_rep = [(l, sp.log(ln_l)) for l, ln_l in zip(lambdas, ln_lambdas)]
 
     L = entropy_energy + sum(lambdas * eqs)
@@ -210,6 +220,12 @@ def out_syms():
     st.header("before simplification:")
     for x in variables:
         print_eq(sp.Derivative(L_sym, x, evaluate=False), sp.diff(L, x), 0)
+
+    st.subheader("using new variables:")
+    for a, b in ln_lambdas_rep:
+        print_eq(a, b)
+
+    # rewrite by poly
     for item in gradL:
         eq = item["equation"]
         for var in eq.free_symbols:
@@ -217,29 +233,19 @@ def out_syms():
                 eq = var - sp.solve(eq, var)[0]
                 break
         item["equation"] = eq
-    st.header("using:")
-    for a,b in ln_lambdas_rep:
-        print_eq(a, b)
+
     st.header("after simplification:")
     for e in gradL:
         print_eq(e["equation"], 0)
     # st.table(gradL)
     vars_with_lnlambda = np.concatenate([prob_flatten, ln_lambdas, slacks])
     simplified_eqs = [e["equation"] for e in gradL]
-    solved = sp.solve(
-        simplified_eqs,
-        vars_with_lnlambda.tolist(),
-        dict=True
-    )
+    try:
+        prob_new = solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda)
+        probs.dataframe(prob_new)
+    except FunctionTimedOut:
+        probs.text("solving time out.")
 
-    for i, solution in enumerate(solved):
-        st.subheader(f"solution {i}:")
-        for sym, var in solution.items():
-            print_eq(sym, var)
-    st.table(solved)
-
-    prob_new = np.vectorize(lambda x: x.subs(solved[0]).evalf(prec))(prob_symbols)
-    probs.dataframe(prob_new)
 
     # non_lin = sp.nonlinsolve(
     #     simplified_eqs,
@@ -250,6 +256,24 @@ def out_syms():
 
     # solved = [i for i in solved if is_symbol_all_probs(i, prob_set)]
     # st.write(solved)
+
+@func_set_timeout(solution_timeout)
+def solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda):
+    solved = sp.solve(
+        simplified_eqs,
+        vars_with_lnlambda.tolist(),
+        dict=True
+    )
+    for i1, solution in enumerate(solved):
+        st.subheader(f"solution {i1}:")
+        for sym, var1 in solution.items():
+            print_eq(sym, var1)
+    st.table(solved)
+    prob_new = np.vectorize(lambda x: x.subs(solved[0]).evalf(solution_precision))(prob_symbols)
+    return prob_new
+
+
+# @func_set_timeout(solution_timeout)
 
 
 def print_eq(*exprs):
@@ -280,6 +304,7 @@ def torch_optim():
         optim.step()
 
     probs.table(mine_model.probs.detach().numpy())
+
 
 # torch_optim()
 

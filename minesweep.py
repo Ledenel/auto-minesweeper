@@ -265,6 +265,8 @@ def out_syms():
         probs.dataframe(prob_new)
     except FunctionTimedOut:
         probs.text("solving time out.")
+    except ValueError as v:
+        probs.text(f"unexpected value: {v}")
 
     # non_lin = sp.nonlinsolve(
     #     simplified_eqs,
@@ -299,6 +301,8 @@ def solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda):
         # vars_with_lnlambda.tolist(),
         dict=True
     )
+    if not solved:
+        raise ValueError("no solution!")
     for i1, solution in enumerate(solved):
         st.subheader(f"solution {i1}:")
         for sym, var1 in solution.items():

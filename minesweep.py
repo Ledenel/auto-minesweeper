@@ -9,6 +9,7 @@ import streamlit as st
 import numpy as np
 from func_timeout import FunctionTimedOut, func_set_timeout
 from streamlit_bokeh_events import streamlit_bokeh_events
+from sympy.stats import H, Bernoulli
 from torch.distributions import Categorical
 from torch.nn import Sigmoid
 from lagrange_constrain import LagrangeConstrainedLoss
@@ -282,7 +283,7 @@ def poly_rewrite_iter(eq):
 def solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda):
     solved = sp.solve(
         simplified_eqs,
-        vars_with_lnlambda.tolist(),
+        # vars_with_lnlambda.tolist(),
         dict=True
     )
     for i1, solution in enumerate(solved):

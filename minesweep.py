@@ -167,6 +167,7 @@ def is_symbol_all_probs(solve_dict, sym_set):
                 return False
     return True
 
+
 solution_timeout = st.sidebar.number_input("solving timeout(seconds):", value=10)
 solution_precision = st.sidebar.number_input("solution precision:", value=3)
 
@@ -212,31 +213,33 @@ def out_syms():
     L = entropy_energy + sum(lambdas * eqs)
     L_sym = sp.Symbol("L")
     st.header("target:")
-    print_eq(L_sym, L)
+    st.latex(latex_eqs(L_sym, L))
 
     variables = np.concatenate([prob_flatten, lambdas])
     prob_set = set(prob_symbols.flatten())
     gradL = [{"diff": x, "equation": sp.diff(L, x).subs(ln_lambdas_rep)} for x in variables]
     st.header("before simplification:")
     for x in variables:
-        print_eq(sp.Derivative(L_sym, x, evaluate=False), sp.diff(L, x), 0)
+        st.latex(latex_eqs(sp.Derivative(L_sym, x, evaluate=False), sp.diff(L, x), 0))
 
     st.subheader("using new variables:")
     for a, b in ln_lambdas_rep:
-        print_eq(a, b)
+        st.latex(latex_eqs(a, b))
 
+    for e in gradL:
+        st.latex(latex_eqs(e["equation"], 0))
     # rewrite by poly
     for item in gradL:
-        eq = item["equation"]
-        for var in eq.free_symbols:
-            if var in prob_set:
-                eq = var - sp.solve(eq, var)[0]
-                break
-        item["equation"] = eq
+        # eq = item["equation"]
+        # for var in eq.free_symbols:
+        #     if var in prob_set:
+        #         eq = var - sp.solve(eq, var)[0]
+        #         break
+        item["equation"] = poly_rewrite(item["equation"])
 
-    st.header("after simplification:")
+    st.subheader("after poly roots rewrite:")
     for e in gradL:
-        print_eq(e["equation"], 0)
+        st.latex(latex_eqs(e["equation"], 0))
     # st.table(gradL)
     vars_with_lnlambda = np.concatenate([prob_flatten, ln_lambdas, slacks])
     simplified_eqs = [e["equation"] for e in gradL]
@@ -245,7 +248,6 @@ def out_syms():
         probs.dataframe(prob_new)
     except FunctionTimedOut:
         probs.text("solving time out.")
-
 
     # non_lin = sp.nonlinsolve(
     #     simplified_eqs,
@@ -257,6 +259,22 @@ def out_syms():
     # solved = [i for i in solved if is_symbol_all_probs(i, prob_set)]
     # st.write(solved)
 
+
+def poly_rewrite(eq):
+    solved_items = list(poly_rewrite_iter(eq))
+    if solved_items:
+        return sp.Mul(*[sym - val for sym, val in solved_items])
+    else:
+        return eq
+
+
+def poly_rewrite_iter(eq):
+    solved_eq = sp.solve(eq, dict=True)
+    for solution in solved_eq:
+        assert len(solution) == 1, f"it is impossible to get multivariate {solution.keys()} from {eq}"
+        yield from solution.items()
+
+
 @func_set_timeout(solution_timeout)
 def solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda):
     solved = sp.solve(
@@ -267,7 +285,7 @@ def solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda):
     for i1, solution in enumerate(solved):
         st.subheader(f"solution {i1}:")
         for sym, var1 in solution.items():
-            print_eq(sym, var1)
+            st.latex(latex_eqs(sym, var1))
     st.table(solved)
     prob_new = np.vectorize(lambda x: x.subs(solved[0]).evalf(solution_precision))(prob_symbols)
     return prob_new
@@ -276,9 +294,9 @@ def solve_eq(prob_symbols, simplified_eqs, vars_with_lnlambda):
 # @func_set_timeout(solution_timeout)
 
 
-def print_eq(*exprs):
+def latex_eqs(*exprs):
     strs = " = ".join(sp.latex(expr) for expr in exprs)
-    st.latex(strs)
+    return strs
 
 
 out_syms()

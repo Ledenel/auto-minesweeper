@@ -172,6 +172,9 @@ solution_timeout = st.sidebar.number_input("solving timeout(seconds):", value=10
 solution_precision = st.sidebar.number_input("solution precision:", value=3)
 
 
+def entropy(x):
+    return -x * sp.log(x) + -(1-x) * sp.log(1-x)
+
 def out_syms():
     prob_symbols = np.array([[sp.Symbol(f"P_{{{i},{j}}}", real=True) for j in range(w)] for i in range(h)])
 
@@ -182,10 +185,11 @@ def out_syms():
     around_numbers = around_numbers[now & ~has_mine]
 
     prob_flatten = prob_symbols.flatten()
-    all_bombs = np.array([sum(prob_flatten) - mines])
+    if st.sidebar.checkbox("knowing total mines?"):
+        all_bombs = np.array([sum(prob_flatten) - mines])
+    else:
+        all_bombs = np.array([])
 
-    def entropy(x):
-        return -x * sp.log(x)
 
     entropy_energy = sum(np.vectorize(entropy)(prob_flatten))
 
@@ -193,9 +197,9 @@ def out_syms():
     slack = "x^2"
     if st.sidebar.checkbox("use slacks?"):
         if st.sidebar.checkbox("lower bound?"):
-            lower = st.sidebar.number_input("lower bound:", value=0)
+            lower = st.sidebar.number_input("lower bound:", value=0.0)
         if st.sidebar.checkbox("upper bound?"):
-            upper = st.sidebar.number_input("upper bound:", value=1)
+            upper = st.sidebar.number_input("upper bound:", value=1.0)
         slack = st.sidebar.text_input("slack variable form:", value=slack)
     slack_expr = sp.sympify(slack)
     r_eqs, slacks = restrict_vars(prob_flatten, lower, upper, sp.lambdify(slack_expr.free_symbols, slack_expr))
@@ -223,9 +227,8 @@ def out_syms():
         st.latex(latex_eqs(sp.Derivative(L_sym, x, evaluate=False), sp.diff(L, x), 0))
 
     st.subheader("using new variables:")
-    for a, b in ln_lambdas_rep:
-        st.latex(latex_eqs(a, b))
-
+    st.latex(" , ".join(latex_eqs(a, b) for a, b in ln_lambdas_rep))
+    st.subheader("after substitution:")
     for e in gradL:
         st.latex(latex_eqs(e["equation"], 0))
     # rewrite by poly

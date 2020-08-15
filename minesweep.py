@@ -115,19 +115,19 @@ def collect_tensor_adj_sum(tensor: torch.Tensor):
     )
     return conv_adj.squeeze().squeeze()
 
-def restrict_vars(vars_source: Iterable[sp.Symbol], min_val=None, max_val=None) -> Tuple[np.ndarray, np.ndarray]:
+def restrict_vars(vars_source: Iterable[sp.Symbol], min_val=None, max_val=None, slack_func = lambda x: x*x) -> Tuple[np.ndarray, np.ndarray]:
     source = np.array(vars_source)
     eqs = []
     slack_vars = []
     if min_val is not None:
         slack_min = np.array(sp.symbols(f"zmin_:{len(source)}", real=True))
         slack_vars += slack_min.tolist()
-        slack_min = np.vectorize(sp.Abs)(slack_min)
+        slack_min = np.vectorize(slack_func)(slack_min)
         eqs += (source - min_val - slack_min).tolist()
     if max_val is not None:
         slack_max = np.array(sp.symbols(f"zmax_:{len(source)}", real=True))
         slack_vars += slack_max.tolist()
-        slack_max = np.vectorize(sp.Abs)(slack_max)
+        slack_max = np.vectorize(slack_func)(slack_max)
         eqs += (max_val - source - slack_max).tolist()
     return np.array(eqs), np.array(slack_vars)
 
@@ -196,13 +196,20 @@ def out_syms():
     eqs = np.concatenate([opened_is_known, around_numbers, all_bombs, r_eqs])
 
     lambdas = np.array([sp.Symbol(f"\\lambda_{i}", real=True) for i in range(len(eqs))])
-    ln_lambdas = np.array([sp.Symbol(f"r\\lambda_{i}", real=True) for i in range(len(eqs))])
+    ln_lambdas = np.array([sp.Symbol(f"\\mu_{i}", real=True) for i in range(len(eqs))])
     ln_lambdas_rep = [(l, sp.log(ln_l)) for l, ln_l in zip(lambdas, ln_lambdas)]
 
     L = entropy_energy + sum(lambdas * eqs)
+    L_sym = sp.Symbol("L")
+    st.header("target:")
+    print_eq(L_sym, L)
+
     variables = np.concatenate([prob_flatten, lambdas])
-    prob_set = set(prob_flatten)
+    prob_set = set(prob_symbols.flatten())
     gradL = [{"diff": x, "equation": sp.diff(L, x).subs(ln_lambdas_rep)} for x in variables]
+    st.header("before simplification:")
+    for x in variables:
+        print_eq(sp.Derivative(L_sym, x, evaluate=False), sp.diff(L, x), 0)
     for item in gradL:
         eq = item["equation"]
         for var in eq.free_symbols:
@@ -210,8 +217,13 @@ def out_syms():
                 eq = var - sp.solve(eq, var)[0]
                 break
         item["equation"] = eq
-
-    st.table(gradL)
+    st.header("using:")
+    for a,b in ln_lambdas_rep:
+        print_eq(a, b)
+    st.header("after simplification:")
+    for e in gradL:
+        print_eq(e["equation"], 0)
+    # st.table(gradL)
     vars_with_lnlambda = np.concatenate([prob_flatten, ln_lambdas, slacks])
     simplified_eqs = [e["equation"] for e in gradL]
     solved = sp.solve(
@@ -220,7 +232,14 @@ def out_syms():
         dict=True
     )
 
+    for i, solution in enumerate(solved):
+        st.subheader(f"solution {i}:")
+        for sym, var in solution.items():
+            print_eq(sym, var)
     st.table(solved)
+
+    prob_new = np.vectorize(lambda x: x.subs(solved[0]).evalf(prec))(prob_symbols)
+    probs.dataframe(prob_new)
 
     # non_lin = sp.nonlinsolve(
     #     simplified_eqs,
@@ -231,6 +250,12 @@ def out_syms():
 
     # solved = [i for i in solved if is_symbol_all_probs(i, prob_set)]
     # st.write(solved)
+
+
+def print_eq(*exprs):
+    strs = " = ".join(sp.latex(expr) for expr in exprs)
+    st.latex(strs)
+
 
 out_syms()
 

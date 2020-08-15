@@ -1,0 +1,6 @@
+scipy
+sympy
+bokeh
+streamlit_bokeh_events
+torch
+-f https://download.pytorch.org/whl/torch_stable.html

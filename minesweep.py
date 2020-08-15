@@ -11,6 +11,7 @@ from streamlit_bokeh_events import streamlit_bokeh_events
 from torch.distributions import Categorical
 from torch.nn import Sigmoid
 from lagrange_constrain import LagrangeConstrainedLoss
+import sympy as sp
 
 
 # from models import collect_tensor_adj_sum, MineModel
@@ -120,7 +121,7 @@ class MineModel(torch.nn.Module):
         self.now_tensor = now_tensor
         self.prob_vars_param = torch.nn.Parameter(torch.Tensor(size=(h, w)))
         self.constrain = LagrangeConstrainedLoss(
-            eqs_zero_len=int(now_tensor.sum()) * 2 + 1,
+            eqs_zero_len=int(now_tensor.sum() + (now_tensor & ~has_mine).sum() + 1),
         )
 
     @property
@@ -139,6 +140,78 @@ class MineModel(torch.nn.Module):
         loss = self.constrain(-entropy_energy, all_eqs)
         return loss
 
+
+def is_symbol_all_probs(solve_dict, sym_set):
+    for sym, value in solve_dict.items():
+        if sym in sym_set:
+            if ((value <= 1) & (value >= 0)) is sp.S.false:
+                return False
+    return True
+
+
+prec = st.sidebar.number_input("solution precision:", value=3)
+
+
+def out_syms():
+    prob_symbols = np.array([[sp.Symbol(f"P_{{{i},{j}}}", real=True) for j in range(w)] for i in range(h)])
+
+    opened_is_known = prob_symbols - has_mine.astype(int)
+    opened_is_known = opened_is_known[now]
+
+    around_numbers = np.vectorize(sum)(collect_adj(prob_symbols)) - numbers
+    around_numbers = around_numbers[now & ~has_mine]
+
+    all_bombs = np.array([sum(prob_symbols.flatten()) - mines])
+
+    def entropy(x):
+        return -x * sp.log(x)
+
+    entropy_energy = sum(np.vectorize(entropy)(prob_symbols.flatten()))
+
+    eqs = np.concatenate([opened_is_known, around_numbers, all_bombs])
+
+    lambdas = np.array([sp.Symbol(f"\\lambda_{i}", real=True) for i in range(len(eqs))])
+    ln_lambdas = np.array([sp.Symbol(f"r\\lambda_{i}", real=True) for i in range(len(eqs))])
+    ln_lambdas_rep = [(l, sp.log(ln_l)) for l, ln_l in zip(lambdas, ln_lambdas)]
+
+    L = entropy_energy + sum(lambdas * eqs)
+    variables = np.concatenate([prob_symbols.flatten(), lambdas])
+    prob_set = set(prob_symbols.flatten())
+    gradL = [{"diff": x, "equation": sp.diff(L, x).subs(ln_lambdas_rep)} for x in variables]
+    for item in gradL:
+        eq = item["equation"]
+        for var in eq.free_symbols:
+            if var in prob_set:
+                eq = var - sp.solve(eq, var)[0]
+                break
+        item["equation"] = eq
+
+    st.table(gradL)
+    vars_with_lnlambda = np.concatenate([prob_symbols.flatten(), ln_lambdas])
+    simplified_eqs = [e["equation"] for e in gradL]
+    solved = sp.solve(
+        simplified_eqs,
+        vars_with_lnlambda.tolist(),
+        dict=True
+    )
+
+    st.table(solved)
+
+    non_lin = sp.nonlinsolve(
+        simplified_eqs,
+        vars_with_lnlambda.tolist()
+    )
+
+    st.write(non_lin)
+
+    # solved = [i for i in solved if is_symbol_all_probs(i, prob_set)]
+    # st.write(solved)
+    for solve_dict in solved:
+        st.write(np.vectorize(lambda x: x.subs(solve_dict).evalf(prec))(prob_symbols))
+
+
+
+out_syms()
 
 has_mine_tensor = torch.from_numpy(has_mine)
 now_tensor = torch.from_numpy(now)

@@ -234,14 +234,27 @@ def out_syms():
         st.latex(latex_eqs(e["equation"], 0))
     # rewrite by poly
     for item in gradL:
-        # eq = item["equation"]
-        # for var in eq.free_symbols:
-        #     if var in prob_set:
-        #         eq = var - sp.solve(eq, var)[0]
-        #         break
         item["equation"] = poly_rewrite(item["equation"])
 
     st.subheader("after poly roots rewrite:")
+    for e in gradL:
+        st.latex(latex_eqs(e["equation"], 0))
+
+    for item in gradL:
+        item["equation"] = poly_rewrite(item["equation"])
+
+    new_roots = []
+    st.subheader("adding possible roots:")
+    for item in gradL:
+        eq = item["equation"]
+        eq: sp.Expr
+        numer, denom = eq.as_numer_denom()
+        if denom != 1:
+            new_roots.append(denom)
+            eq = numer
+        item["equation"] = eq
+    st.latex(" , ".join(latex_eqs(root, 0) for root in new_roots))
+    st.subheader("after rewrite:")
     for e in gradL:
         st.latex(latex_eqs(e["equation"], 0))
     # st.table(gradL)

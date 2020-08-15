@@ -178,17 +178,20 @@ def out_syms():
     around_numbers = np.vectorize(sum)(collect_adj(prob_symbols)) - numbers
     around_numbers = around_numbers[now & ~has_mine]
 
-    all_bombs = np.array([sum(prob_symbols.flatten()) - mines])
+    prob_flatten = prob_symbols.flatten()
+    all_bombs = np.array([sum(prob_flatten) - mines])
 
     def entropy(x):
         return -x * sp.log(x)
 
-    entropy_energy = sum(np.vectorize(entropy)(prob_symbols.flatten()))
+    entropy_energy = sum(np.vectorize(entropy)(prob_flatten))
 
 
-    r_eqs, slacks = restrict_vars(prob_symbols.flatten(), None, None)
+    r_eqs, slacks = restrict_vars(prob_flatten, None, None)
     st.table(r_eqs)
     st.table(slacks)
+    prob_flatten = np.concatenate([prob_flatten, slacks])
+
 
     eqs = np.concatenate([opened_is_known, around_numbers, all_bombs, r_eqs])
 
@@ -197,8 +200,8 @@ def out_syms():
     ln_lambdas_rep = [(l, sp.log(ln_l)) for l, ln_l in zip(lambdas, ln_lambdas)]
 
     L = entropy_energy + sum(lambdas * eqs)
-    variables = np.concatenate([prob_symbols.flatten(), lambdas])
-    prob_set = set(prob_symbols.flatten())
+    variables = np.concatenate([prob_flatten, lambdas])
+    prob_set = set(prob_flatten)
     gradL = [{"diff": x, "equation": sp.diff(L, x).subs(ln_lambdas_rep)} for x in variables]
     for item in gradL:
         eq = item["equation"]
@@ -209,7 +212,7 @@ def out_syms():
         item["equation"] = eq
 
     st.table(gradL)
-    vars_with_lnlambda = np.concatenate([prob_symbols.flatten(), ln_lambdas, slacks])
+    vars_with_lnlambda = np.concatenate([prob_flatten, ln_lambdas, slacks])
     simplified_eqs = [e["equation"] for e in gradL]
     solved = sp.solve(
         simplified_eqs,
@@ -219,12 +222,12 @@ def out_syms():
 
     st.table(solved)
 
-    non_lin = sp.nonlinsolve(
-        simplified_eqs,
-        vars_with_lnlambda.tolist()
-    )
-
-    st.write(non_lin)
+    # non_lin = sp.nonlinsolve(
+    #     simplified_eqs,
+    #     vars_with_lnlambda.tolist()
+    # )
+    #
+    # st.write(non_lin)
 
     # solved = [i for i in solved if is_symbol_all_probs(i, prob_set)]
     # st.write(solved)

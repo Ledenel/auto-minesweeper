@@ -222,14 +222,14 @@ def out_syms():
 
     variables = np.concatenate([prob_flatten, lambdas])
     prob_set = set(prob_symbols.flatten())
-    gradL = [{"diff": x, "equation": sp.diff(L, x).subs(ln_lambdas_rep)} for x in variables]
+    gradL = [{"diff": x, "equation": sp.simplify(sp.diff(L, x).subs(ln_lambdas_rep))} for x in variables]
     st.header("before simplification:")
     for x in variables:
         st.latex(latex_eqs(sp.Derivative(L_sym, x, evaluate=False), sp.diff(L, x), 0))
 
     st.subheader("using new variables:")
     st.latex(" , ".join(latex_eqs(a, b) for a, b in ln_lambdas_rep))
-    st.subheader("after substitution:")
+    st.subheader("after substitution and merge:")
     for e in gradL:
         st.latex(latex_eqs(e["equation"], 0))
     # rewrite by poly
